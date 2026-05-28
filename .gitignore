@@ -1,0 +1,51 @@
+# ---- Node / JS ----
+node_modules/
+dist/
+build/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Lockfiles (prefer to ignore lockfiles at index level per AGENTS.md)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+*.lock
+
+# ---- Go ----
+bin/
+pkg/
+vendor/
+*.exe
+*.test
+*.out
+coverage.out
+
+# ---- IDE / Editor ----
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# ---- Build / temp ----
+dist/
+build/
+target/
+tmp/
+logs/
+coverage/
+
+# ---- Binaries / archives ----
+*.jar
+*.war
+*.class
+*.apk
+*.zip
+
+# AGENTS.md recommended exclusions (high-noise or large files)
+# node_modules, dist, build, target, coverage, .git, .idea, .gradle, tmp, logs
+# lockfiles and some local config
+
