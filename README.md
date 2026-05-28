@@ -38,7 +38,7 @@ GitHub 官方文档说明：从 2026-06-01 起，Copilot 将从 request-based bi
 
 - JetBrains / IntelliJ IDEA 插件优先：状态栏、自检入口、安装引导、低频提示、个人看板入口。
 - 本地 sidecar `qiankun-mcpd` 承载核心逻辑：Memory Index、UsageMeter、tool cache、payload minimizer、instructions lint、health check。
-- 本地 SQLite 存储 usage、cache、memory 和报告数据。
+- W1 的 Tool Result Cache 首版使用 in-memory + JSON 文件持久化；SQLite 仍保留给后续 UsageMeter / Memory / Cache 演进。
 - MCP 只暴露最小工具集，避免工具描述和工具返回成为新的 token 黑洞。
 - VS Code Extension 与 CLI 作为后续入口复用同一个 sidecar。
 
@@ -47,7 +47,8 @@ flowchart LR
   IDEA["IntelliJ IDEA Plugin\n状态栏 / 自检 / 低频提示"] --> SC["qiankun-mcpd Sidecar"]
   CLI["CLI / Git Hook"] --> SC
   VS["未来 VS Code Extension"] --> SC
-  SC --> DB["SQLite\nUsageMeter / Memory / Cache"]
+  SC --> TC["JSON Tool Cache\nW1"]
+  SC --> DB["SQLite W2/W3+\nUsageMeter / Memory / Cache"]
   SC --> MCP["MCP Tools"]
   MCP --> CP["GitHub Copilot"]
 ```
@@ -78,18 +79,26 @@ flowchart LR
 └── AGENTS.md
 ```
 
-当前 W0 只落地工程脚手架。`internal/compaction`、`internal/instructions`、`internal/memory`、`internal/toolcache`、`internal/usage`、`internal/weekly` 等能力目录会在后续 W1+ 按阶段新增。
+当前 W1 已在 W0 脚手架上新增 `internal/toolcache` 和 `internal/injection`。`internal/compaction`、`internal/instructions`、`internal/memory`、`internal/usage`、`internal/weekly` 等能力目录仍会在后续 W2/W3+ 按阶段新增。
 
 CLI 状态：
 
 | 命令 | 用途 | 当前状态 |
 | --- | --- | --- |
-| `qiankun-mcpd --version` | 输出 sidecar 当前版本 | W0 已实现，初始版本 `0.1.0-w0` |
-| `qiankun-mcpd --health` | 输出 sidecar readiness | W0 已实现，稳定 JSON 为 `{"status":"ready"}` |
-| `qiankun-mcpd memory-scan --root <path> --format json` | 扫描仓库并生成 Memory Index | W1+ 目标，未实现 |
+| `qiankun-mcpd --version` | 输出 sidecar 当前版本 | W1 已实现，当前版本 `0.1.0-w1` |
+| `qiankun-mcpd --health` | 输出 sidecar readiness | W1 已扩展，顶层 `status` 保持 `ready`，新增 `toolcache` 子对象 |
+| `qiankun-mcpd memory-scan --root <path> --format json` | 扫描仓库并生成 Memory Index | W2/W3+ 目标，未实现 |
 | `qiankun-mcpd memory-query --root <path> --query "<text>" --top-k 8` | 查询相关文件上下文 | W2/W3+ 目标，未实现 |
 | `qiankun-mcpd usage-report` | 输出本地 UsageMeter 汇总 | W3+ 目标，未实现 |
 | `qiankun-mcpd weekly-report --format markdown` | 输出 token、cache、Memory、Instructions 周报 | W3+ 目标，未实现 |
+
+安装命令：
+
+```bash
+go install github.com/xiaoboxuezhangora/QianKun/cmd/qiankun-mcpd@latest
+```
+
+该命令要求远端 GitHub 仓库路径与 `go.mod` 的 module path 保持一致，即 `github.com/xiaoboxuezhangora/QianKun`。
 
 目标验证命令：
 
@@ -101,30 +110,43 @@ make idea-plugin
 
 ## 当前阶段判断
 
-当前仓库处于 **Phase 0 / W0 工程脚手架已落地** 状态。Notion 搭建文档中 W1/W2/W3 描述的是后续路线，本仓库当前不能宣称具备 toolcache、Memory Index、SQLite、UsageMeter、IDEA 插件真实逻辑或 MCP server。
+当前仓库处于 **Phase W1 / 缓存边界与注入区已落地** 状态。W1 只实现 Tool Result Cache 的边界能力、稳定 key 规范、C1 注入区解析与文件读取入口，以及 health 可观测字段；本仓库当前不能宣称具备 Memory Index、仓库扫描、SQLite UsageMeter、IDEA 插件真实逻辑或 MCP server。
 
-W0 已落地：
+W1 已落地：
 
-- Go module：`github.com/wangbo/qiankun`。
+- Go module：`github.com/xiaoboxuezhangora/QianKun`。
 - 目录骨架：`cmd/qiankun-mcpd/`、`internal/`、`idea-plugin/`、`scripts/`、`testdata/`。
-- `qiankun-mcpd --version` 输出 `0.1.0-w0`。
-- `qiankun-mcpd --health` 输出 `{"status":"ready"}`。
+- `internal/toolcache` 提供线程安全 KV store，支持 in-memory + JSON 文件持久化、TTL 过期、LRU 容量驱逐、Stats 和 Close。
+- Toolcache key 格式为 `<tool>:<arg-hash>:<schema-ver>`，参数 hash 基于 JSON 稳定序列化，schema version 为空时使用默认 `v1`。
+- `internal/injection` 支持解析 `<!-- QIANKUN:START -->` / `<!-- QIANKUN:END -->` C1 注入区，并提供项目根目录 `AGENTS.md` / `CLAUDE.md` 的文件级读取入口。
+- `docs/spec/c1-injection-zone.md` 记录注入区协议、幂等原则、错误处理和 W1 非目标。
+- `qiankun-mcpd --version` 输出 `0.1.0-w1`。
+- `qiankun-mcpd --health` 输出稳定 JSON，顶层保留 `{"status":"ready"}` 语义，并新增 `toolcache` 子对象。
 - 未识别参数返回非 0，并输出简短 usage。
 - `scripts/bootstrap.sh` 可重复创建 `~/.qiankun/bin`、`~/.qiankun/cache`、`~/.qiankun/db`、`~/.qiankun/logs`。
-- `make idea-plugin` 仅为 W0 占位，输出 `IDEA plugin not implemented in W0`，退出码为 0。
+- `make idea-plugin` 仍为占位，输出 `IDEA plugin not implemented yet`，退出码为 0。
 
-W0 验证方式：
+W1 验证方式：
 
 ```bash
+go test ./internal/toolcache/...
 make smoke
 go test ./...
 make idea-plugin
 scripts/bootstrap.sh
 ```
 
+W2/W3 仍未实现：
+
+- Memory Index 和 `memory-scan` / `memory-query`。
+- 仓库扫描、framework profile、role 分类和 symbol index。
+- SQLite UsageMeter、weekly-report 和 usage-report。
+- JetBrains 插件真实状态、自检、安装引导逻辑。
+- MCP server 和外部 MCP client 端到端能力。
+
 ## 后续优先级
 
-以下内容属于 W1+ 路线，当前 W0 未实现。后续不应只堆 Memory Index 指标，而应按五个能力面并行推进：
+以下内容属于 W2/W3+ 路线，当前 W1 未实现。后续不应只堆 Memory Index 指标，而应按五个能力面并行推进：
 
 | 分线 | 核心动作 | 退出标志 | 优先级 |
 | --- | --- | --- | --- |

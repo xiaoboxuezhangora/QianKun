@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
 
 func TestHealthOutput(t *testing.T) {
+	t.Setenv("QIANKUN_HOME", t.TempDir())
+
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
@@ -15,8 +18,41 @@ func TestHealthOutput(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
 	}
 
-	if got := strings.TrimSpace(stdout.String()); got != `{"status":"ready"}` {
-		t.Fatalf("unexpected health output: %q", got)
+	var payload struct {
+		Status    string `json:"status"`
+		Toolcache struct {
+			Readiness string `json:"readiness"`
+			FilePath  string `json:"file_path"`
+		} `json:"toolcache"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("health output is not JSON: %v; output=%q", err, stdout.String())
+	}
+
+	if payload.Status != "ready" {
+		t.Fatalf("unexpected health status: %+v", payload)
+	}
+	if payload.Toolcache.Readiness == "" {
+		t.Fatalf("expected toolcache readiness in health output: %+v", payload)
+	}
+	if payload.Toolcache.FilePath == "" {
+		t.Fatalf("expected toolcache file path in health output: %+v", payload)
+	}
+}
+
+func TestVersionOutput(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run([]string{"--version"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "0.1.0-w1") {
+		t.Fatalf("expected version in stdout, got %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
 	}
 }
 

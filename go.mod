@@ -1,3 +1,3 @@
-module github.com/wangbo/qiankun
+module github.com/xiaoboxuezhangora/QianKun
 
 go 1.22
