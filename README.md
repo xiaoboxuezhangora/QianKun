@@ -79,18 +79,18 @@ flowchart LR
 └── AGENTS.md
 ```
 
-当前 W2 已在 W1 的 `internal/toolcache` 和 `internal/injection` 基础上新增 `internal/memory/scan`、`internal/memory/tokens`，并保留 `internal/compaction` 占位包。`internal/instructions`、`internal/usage`、`internal/weekly`、SQLite Memory Index、MCP server 等仍会在后续 W3+ 按阶段新增。
+当前 W3 已在 W1/W2 基础上新增 SQLite Memory Index、UsageMeter、InstructionsLinter v0 和 weekly-report。`internal/compaction` 仍只是占位包；MCP server、完整 framework profile、hybrid rerank、semantic cache、复杂 Agent 编排和 IDEA 插件产品化仍属于 W4+。
 
 CLI 状态：
 
 | 命令 | 用途 | 当前状态 |
 | --- | --- | --- |
-| `qiankun-mcpd --version` | 输出 sidecar 当前版本 | W2 已实现，当前版本 `0.2.0-w2` |
-| `qiankun-mcpd --health` | 输出 sidecar readiness | W1 已扩展，顶层 `status` 保持 `ready`，新增 `toolcache` 子对象 |
-| `qiankun-mcpd memory-scan --root <path> --format json` | 扫描仓库，输出文件分档、权重、token 估算和 skipped summary | W2 已实现；不含 SQLite FTS5 和查询 |
-| `qiankun-mcpd memory-query --root <path> --query "<text>" --top-k 8` | 查询相关文件上下文 | W3+ 目标，未实现 |
-| `qiankun-mcpd usage-report` | 输出本地 UsageMeter 汇总 | W3+ 目标，未实现 |
-| `qiankun-mcpd weekly-report --format markdown` | 输出 token、cache、Memory、Instructions 周报 | W3+ 目标，未实现 |
+| `qiankun-mcpd --version` | 输出 sidecar 当前版本 | W3 已实现，当前版本 `0.3.0-w3` |
+| `qiankun-mcpd --health` | 输出 sidecar readiness | W3 保持顶层 `status=ready`，包含 `toolcache` 和 `usage` 子对象 |
+| `qiankun-mcpd memory-scan --root <path> --format json` | 扫描仓库，输出文件分档、权重、token 估算和 skipped summary | W3 已实现；同时非阻断同步 SQLite Memory Index 和 UsageMeter |
+| `qiankun-mcpd memory-query --root <path> --query "<text>" --top-k 8` | 查询相关文件上下文 | W3 已实现，自动扫描/增量更新索引 |
+| `qiankun-mcpd usage-report` | 输出本地 UsageMeter 汇总 | W3 已实现 |
+| `qiankun-mcpd weekly-report --format markdown --instructions-root <path>` | 输出 token、cache、Memory、Instructions 周报 | W3 已实现，支持 `--output <file>` |
 
 安装命令：
 
@@ -105,12 +105,13 @@ go install github.com/xiaoboxuezhangora/QianKun/cmd/qiankun-mcpd@latest
 ```bash
 make smoke
 go test ./...
+go test -race ./...
 make idea-plugin
 ```
 
 ## 当前阶段判断
 
-当前仓库处于 **Phase W2 / 分档压缩与扫描器已落地** 状态。W2 只实现仓库扫描、文件分档、权重、文本 token 粗估、跳过原因解释和 `memory-scan` JSON 输出；`internal/compaction` 只是占位文档，不介入长会话流。本仓库当前不能宣称具备 SQLite FTS5 Memory Index、`memory-query`、UsageMeter、weekly-report、IDEA 插件真实逻辑或 MCP server。
+当前仓库处于 **Phase W3 / Memory 持久化、UsageMeter 与周报已落地** 状态。W3 实现本地 SQLite Memory Index、`memory-query`、UsageMeter、InstructionsLinter v0 和 `weekly-report`；`internal/compaction` 仍是占位文档，不介入长会话流。本仓库当前不能宣称具备完整 framework profile、symbol index 深化、hybrid rerank、semantic cache、MCP server、IDEA 插件真实产品化或企业驾驶舱。
 
 W1 已落地：
 
@@ -120,11 +121,11 @@ W1 已落地：
 - Toolcache key 格式为 `<tool>:<arg-hash>:<schema-ver>`，参数 hash 基于 JSON 稳定序列化，schema version 为空时使用默认 `v1`。
 - `internal/injection` 支持解析 `<!-- QIANKUN:START -->` / `<!-- QIANKUN:END -->` C1 注入区，并提供项目根目录 `AGENTS.md` / `CLAUDE.md` 的文件级读取入口。
 - `docs/spec/c1-injection-zone.md` 记录注入区协议、幂等原则、错误处理和 W1 非目标。
-- `qiankun-mcpd --version` 输出 `0.2.0-w2`。
-- `qiankun-mcpd --health` 输出稳定 JSON，顶层保留 `{"status":"ready"}` 语义，并新增 `toolcache` 子对象。
+- `qiankun-mcpd --version` 输出 `0.3.0-w3`。
+- `qiankun-mcpd --health` 输出稳定 JSON，顶层保留 `{"status":"ready"}` 语义，并包含 `toolcache` 与 `usage` 子对象。
 - 未识别参数返回非 0，并输出简短 usage。
 - `scripts/bootstrap.sh` 可重复创建 `~/.qiankun/bin`、`~/.qiankun/cache`、`~/.qiankun/db`、`~/.qiankun/logs`。
-- `make idea-plugin` 仍为占位，输出 `IDEA plugin not implemented yet`，退出码为 0。
+- `make idea-plugin` 仍为占位，输出 IDEA 插件占位说明，退出码为 0。
 
 W2 已落地：
 
@@ -140,12 +141,38 @@ W2 已落地：
 - 轻量支持根目录 `.gitignore` 和 `.contextgateignore`：支持注释、空行、目录规则、基础 glob 和 `**`；暂不支持 `!` 反选和完整 Git ignore 语义。
 - `internal/compaction` 仅是占位 package，明确 W2 不做真实会话压缩。
 
+W3 已落地：
+
+- 新增 `internal/memory/index`，使用 SQLite 持久化 `memory-scan` 的 indexed 文件结果。
+- 默认 Memory DB 路径为 `${QIANKUN_HOME:-~/.qiankun}/db/memory.sqlite`。
+- `file_summary` 保存 `root`、`path`、`kind`、`weight`、`token_estimate`、`size_bytes`、`content_sample`、`file_hash`、`mtime_unix_nano`、`updated_at`。
+- `keyword_index` 用于 FTS5 不可用时的关键词检索降级。
+- `recent_change` 已有最小 upsert/delete 记录；`symbol` 仅保留表结构，W3 不做 LSP 或 framework symbol 提取。
+- `memory-scan` 会在保持原 JSON schema 的同时非阻断同步 SQLite Memory Index。
+- `memory-query` 会自动先扫描并基于 mtime + file hash 做增量更新；skipped/noisy/binary 文件不进入 FTS 或关键词索引。
+- SQLite driver 选择 `modernc.org/sqlite`：纯 Go、无需 CGO，便于本地 sidecar 分发；FTS5 通过运行时 `CREATE VIRTUAL TABLE ... fts5` 探测。
+- 如当前 driver/SQLite 构建不支持 FTS5，代码会把 `fts5_enabled=false` 写入 meta，并使用 `keyword_index` + Go 侧评分降级检索；该降级不阻断 `memory-query`。
+- 新增 `internal/usage`，默认 Usage DB 路径为 `${QIANKUN_HOME:-~/.qiankun}/db/usage.sqlite`。
+- UsageMeter 事件模型包含 `call`、`cache_hit`、`cache_miss`、`latency`、`token_estimate`，并聚合 calls、cache、tokens、saved tokens 和 p95 latency。
+- `memory-scan` / `memory-query` 会记录最小 usage 事件；UsageMeter 写入失败只在 stderr/health 中体现，不阻断主流程。
+- 新增 `internal/instructions`，InstructionsLinter v0 report-only 检查指令文件过长、重复段落、缺少作用域、动态信息和明显 secret/token/cookie/private key 模式。
+- 新增 `internal/weekly` 和 `weekly-report`，聚合 Memory Index、UsageMeter、Instructions findings 和 W3 known gaps。
+
 W2 使用示例：
 
 ```bash
 ./bin/qiankun-mcpd memory-scan --root testdata/memory-scan-fixture --format json
 ./bin/qiankun-mcpd memory-scan testdata/memory-scan-fixture
 ./bin/qiankun-mcpd memory-scan --root . --format json --include 'src/**' --exclude 'dist/**'
+```
+
+W3 使用示例：
+
+```bash
+./bin/qiankun-mcpd memory-query --root testdata/memory-scan-fixture --query "Vue router component" --top-k 5
+./bin/qiankun-mcpd usage-report
+./bin/qiankun-mcpd weekly-report --format markdown --instructions-root .
+./bin/qiankun-mcpd weekly-report --format markdown --instructions-root . --output /tmp/qiankun-weekly.md
 ```
 
 W2 JSON 输出结构：
@@ -182,33 +209,76 @@ W2 JSON 输出结构：
 }
 ```
 
-W2 验证方式：
+W3 `memory-query` JSON 输出结构：
+
+```json
+{
+  "root": "/absolute/project",
+  "query": "Vue router component",
+  "top_k": 5,
+  "results": [
+    {
+      "path": "src/App.vue",
+      "kind": "source",
+      "weight": 90,
+      "score": 120,
+      "token_estimate": 16,
+      "snippet": "<template>..."
+    }
+  ]
+}
+```
+
+W3 `usage-report` JSON 输出结构：
+
+```json
+{
+  "db_path": "/Users/name/.qiankun/db/usage.sqlite",
+  "generated_at": "2026-05-29T00:00:00Z",
+  "total_calls": 2,
+  "cache_hits": 1,
+  "cache_misses": 1,
+  "estimated_tokens": 120,
+  "estimated_saved_tokens": 300,
+  "cache_avoided_tokens": 300,
+  "sent_context_tokens_estimate": 120,
+  "adjusted_saved_tokens": 80,
+  "ignored_tokens_estimate": 220,
+  "p95_latency_ms": 12
+}
+```
+
+W3 验证方式：
 
 ```bash
 go test ./...
 go test -race ./...
 make smoke
 ./bin/qiankun-mcpd memory-scan --root testdata/memory-scan-fixture --format json
+./bin/qiankun-mcpd memory-query --root testdata/memory-scan-fixture --query "Vue router component" --top-k 5
+./bin/qiankun-mcpd usage-report
+./bin/qiankun-mcpd weekly-report --format markdown --instructions-root .
 ```
 
-W3+ 仍未实现：
+W4+ 仍未实现：
 
-- SQLite FTS5 Memory Index 和 `memory-query`。
-- 完整 framework profile、role 分类、Android / Capacitor 语义召回、symbol index 和 hybrid rerank。
-- SQLite UsageMeter、weekly-report 和 usage-report。
-- JetBrains 插件真实状态、自检、安装引导逻辑。
+- 完整 framework profile 和深度 role 分类。
+- symbol index 深化和 LSP/framework symbol 提取。
+- hybrid rerank、MMR 多样性排序和 semantic cache。
 - MCP server 和外部 MCP client 端到端能力。
+- 真正 IDEA 插件产品化，包括状态栏、自检、安装引导和用户交互。
+- 企业驾驶舱。
 
 ## 后续优先级
 
-以下内容属于 W2/W3+ 路线，当前 W1 未实现。后续不应只堆 Memory Index 指标，而应按五个能力面并行推进：
+以下内容属于 W4+ 路线。后续不应只堆 Memory Index 指标，而应按五个能力面并行推进：
 
 | 分线 | 核心动作 | 退出标志 | 优先级 |
 | --- | --- | --- | --- |
 | Memory & Cache | 框架感知召回，噪声目录降权 | Vue / Angular / React / Spring Boot 查询 Top-5 命中率 >= 80% | P0 |
 | Instructions | Linter 从 report-only 升级到 warning | 真实项目至少消除 3 类指令异味 | P0 |
 | UsageMeter | `saved vs overhead` 并排视图、基线对照 | weekly-report 输出净收益数字 | P0 |
-| MCP Tools | 暴露 `memory-query` / `usage-report` | 外部 MCP client 端到端调通 | P1 |
+| MCP Tools | 后续 MCP server 暴露 `memory-query` / `usage-report` | 外部 MCP client 端到端调通 | P1 |
 | Skills | 调研 Copilot Slash Commands 注入点 | 产出 1 页设计 spike | P2 |
 
 ## Memory Index v1 要点
@@ -219,8 +289,8 @@ P0 能力：
 
 - 默认忽略 `node_modules`、`dist`、`build`、`target`、`coverage`、`.git`、`.idea`、`.gradle`、lockfile、大型二进制、生成文件、AI 工具历史目录等噪声。
 - 支持 `.contextgateignore`，并尽量尊重 `.gitignore`。
-- 支持 Vue、Angular、React、Spring Boot framework profile，可在 monorepo 中共存。
-- 给索引文件分配 role，例如 app entry、route definition、page/view、component、store、service、controller、repository、configuration、documentation、generated/noisy。
+- W3 仅保留 `profile` / `role` 基础字段；完整 Vue、Angular、React、Spring Boot framework profile 可在 monorepo 中共存属于 W4+。
+- W4+ 目标是给索引文件分配 role，例如 app entry、route definition、page/view、component、store、service、controller、repository、configuration、documentation、generated/noisy。
 - lockfile / generated / noisy 默认不进入 top-k，除非 query 明确要求。
 - 命令发现只能从真实 scripts、Maven/Gradle task 或框架配置解析，不能凭 package manager 伪造 `pnpm test`。
 - UsageMeter 区分 `estimated_saved_tokens`、`cache_avoided_tokens`、`sent_context_tokens_estimate`、`adjusted_saved_tokens`、`ignored_tokens_estimate`。
@@ -231,6 +301,8 @@ P1 能力：
 - Hybrid Retrieval：先召回，再按 role、query 意图、文件大小惩罚和 MMR 多样性 rerank。
 
 ## 真实项目验收样例
+
+以下命令可用于 W3 手工冒烟；其中 Vue/Android 的高质量 Top-K 命中率、完整 role 识别和 command discovery 仍是 W4+ 验收方向。
 
 ```bash
 CG=/Users/wangbo/own/QianKun/bin/qiankun-mcpd
