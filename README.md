@@ -48,7 +48,7 @@ flowchart LR
   CLI["CLI / Git Hook"] --> SC
   VS["未来 VS Code Extension"] --> SC
   SC --> TC["JSON Tool Cache\nW1"]
-  SC --> DB["SQLite W2/W3+\nUsageMeter / Memory / Cache"]
+  SC --> DB["SQLite W3+\nUsageMeter / Memory / Cache"]
   SC --> MCP["MCP Tools"]
   MCP --> CP["GitHub Copilot"]
 ```
@@ -79,16 +79,16 @@ flowchart LR
 └── AGENTS.md
 ```
 
-当前 W1 已在 W0 脚手架上新增 `internal/toolcache` 和 `internal/injection`。`internal/compaction`、`internal/instructions`、`internal/memory`、`internal/usage`、`internal/weekly` 等能力目录仍会在后续 W2/W3+ 按阶段新增。
+当前 W2 已在 W1 的 `internal/toolcache` 和 `internal/injection` 基础上新增 `internal/memory/scan`、`internal/memory/tokens`，并保留 `internal/compaction` 占位包。`internal/instructions`、`internal/usage`、`internal/weekly`、SQLite Memory Index、MCP server 等仍会在后续 W3+ 按阶段新增。
 
 CLI 状态：
 
 | 命令 | 用途 | 当前状态 |
 | --- | --- | --- |
-| `qiankun-mcpd --version` | 输出 sidecar 当前版本 | W1 已实现，当前版本 `0.1.0-w1` |
+| `qiankun-mcpd --version` | 输出 sidecar 当前版本 | W2 已实现，当前版本 `0.2.0-w2` |
 | `qiankun-mcpd --health` | 输出 sidecar readiness | W1 已扩展，顶层 `status` 保持 `ready`，新增 `toolcache` 子对象 |
-| `qiankun-mcpd memory-scan --root <path> --format json` | 扫描仓库并生成 Memory Index | W2/W3+ 目标，未实现 |
-| `qiankun-mcpd memory-query --root <path> --query "<text>" --top-k 8` | 查询相关文件上下文 | W2/W3+ 目标，未实现 |
+| `qiankun-mcpd memory-scan --root <path> --format json` | 扫描仓库，输出文件分档、权重、token 估算和 skipped summary | W2 已实现；不含 SQLite FTS5 和查询 |
+| `qiankun-mcpd memory-query --root <path> --query "<text>" --top-k 8` | 查询相关文件上下文 | W3+ 目标，未实现 |
 | `qiankun-mcpd usage-report` | 输出本地 UsageMeter 汇总 | W3+ 目标，未实现 |
 | `qiankun-mcpd weekly-report --format markdown` | 输出 token、cache、Memory、Instructions 周报 | W3+ 目标，未实现 |
 
@@ -110,7 +110,7 @@ make idea-plugin
 
 ## 当前阶段判断
 
-当前仓库处于 **Phase W1 / 缓存边界与注入区已落地** 状态。W1 只实现 Tool Result Cache 的边界能力、稳定 key 规范、C1 注入区解析与文件读取入口，以及 health 可观测字段；本仓库当前不能宣称具备 Memory Index、仓库扫描、SQLite UsageMeter、IDEA 插件真实逻辑或 MCP server。
+当前仓库处于 **Phase W2 / 分档压缩与扫描器已落地** 状态。W2 只实现仓库扫描、文件分档、权重、文本 token 粗估、跳过原因解释和 `memory-scan` JSON 输出；`internal/compaction` 只是占位文档，不介入长会话流。本仓库当前不能宣称具备 SQLite FTS5 Memory Index、`memory-query`、UsageMeter、weekly-report、IDEA 插件真实逻辑或 MCP server。
 
 W1 已落地：
 
@@ -120,26 +120,80 @@ W1 已落地：
 - Toolcache key 格式为 `<tool>:<arg-hash>:<schema-ver>`，参数 hash 基于 JSON 稳定序列化，schema version 为空时使用默认 `v1`。
 - `internal/injection` 支持解析 `<!-- QIANKUN:START -->` / `<!-- QIANKUN:END -->` C1 注入区，并提供项目根目录 `AGENTS.md` / `CLAUDE.md` 的文件级读取入口。
 - `docs/spec/c1-injection-zone.md` 记录注入区协议、幂等原则、错误处理和 W1 非目标。
-- `qiankun-mcpd --version` 输出 `0.1.0-w1`。
+- `qiankun-mcpd --version` 输出 `0.2.0-w2`。
 - `qiankun-mcpd --health` 输出稳定 JSON，顶层保留 `{"status":"ready"}` 语义，并新增 `toolcache` 子对象。
 - 未识别参数返回非 0，并输出简短 usage。
 - `scripts/bootstrap.sh` 可重复创建 `~/.qiankun/bin`、`~/.qiankun/cache`、`~/.qiankun/db`、`~/.qiankun/logs`。
 - `make idea-plugin` 仍为占位，输出 `IDEA plugin not implemented yet`，退出码为 0。
 
-W1 验证方式：
+W2 已落地：
+
+- `internal/memory/tokens` 提供 `EstimateTextTokens`，对英文、中文/日韩、混合文本和空文本做保守估算。
+- `internal/memory/scan` 提供标准库仓库遍历 Walker，输出相对路径、文件分档、权重、token 估算、跳过状态和跳过原因。
+- 默认跳过高噪声目录：`node_modules`、`dist`、`build`、`target`、`coverage`、`.git`、`.idea`、`.gradle`、`tmp`、`logs`。
+- 默认识别并跳过 lockfile：`*.lock`、`pnpm-lock.yaml`、`package-lock.json`、`yarn.lock`。
+- 默认识别并跳过 AI 工具缓存/历史：`.claude/settings.local.json`、`.opencode/skills/**`、`.ai-docs/**`。
+- 对超过 64KB 的文本文件只读取尾部 8KB 作为 sample；二进制按扩展名或 NUL sample 识别后不进入索引。
+- 支持 `--include` / `--exclude` 基础 glob 过滤，为后续规则演进保留兼容入口。
+- `skipped_summary` 按原因聚合数量，并保留最多 3 个代表路径。
+- 轻量支持根目录 `.gitignore` 和 `.contextgateignore`：支持注释、空行、目录规则、基础 glob 和 `**`；暂不支持 `!` 反选和完整 Git ignore 语义。
+- `internal/compaction` 仅是占位 package，明确 W2 不做真实会话压缩。
+
+W2 使用示例：
 
 ```bash
-go test ./internal/toolcache/...
-make smoke
-go test ./...
-make idea-plugin
-scripts/bootstrap.sh
+./bin/qiankun-mcpd memory-scan --root testdata/memory-scan-fixture --format json
+./bin/qiankun-mcpd memory-scan testdata/memory-scan-fixture
+./bin/qiankun-mcpd memory-scan --root . --format json --include 'src/**' --exclude 'dist/**'
 ```
 
-W2/W3 仍未实现：
+W2 JSON 输出结构：
 
-- Memory Index 和 `memory-scan` / `memory-query`。
-- 仓库扫描、framework profile、role 分类和 symbol index。
+```json
+{
+  "root": "/absolute/project",
+  "generated_at": "2026-05-28T00:00:00Z",
+  "totals": {
+    "files_seen": 8,
+    "files_indexed": 4,
+    "files_skipped": 4,
+    "directories_skipped": 3,
+    "estimated_tokens": 123
+  },
+  "skipped_summary": {
+    "build_artifact": {
+      "count": 1,
+      "representative_paths": ["dist"]
+    }
+  },
+  "files": [
+    {
+      "path": "src/main.ts",
+      "size_bytes": 96,
+      "kind": "source",
+      "weight": 90,
+      "token_estimate": 24,
+      "skipped": false,
+      "profile": "unknown",
+      "role": "unknown"
+    }
+  ]
+}
+```
+
+W2 验证方式：
+
+```bash
+go test ./...
+go test -race ./...
+make smoke
+./bin/qiankun-mcpd memory-scan --root testdata/memory-scan-fixture --format json
+```
+
+W3+ 仍未实现：
+
+- SQLite FTS5 Memory Index 和 `memory-query`。
+- framework profile、role 分类、symbol index 和 hybrid rerank。
 - SQLite UsageMeter、weekly-report 和 usage-report。
 - JetBrains 插件真实状态、自检、安装引导逻辑。
 - MCP server 和外部 MCP client 端到端能力。
