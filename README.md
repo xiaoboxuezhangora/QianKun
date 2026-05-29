@@ -136,6 +136,7 @@ W2 已落地：
 - 对超过 64KB 的文本文件只读取尾部 8KB 作为 sample；二进制按扩展名或 NUL sample 识别后不进入索引。
 - 支持 `--include` / `--exclude` 基础 glob 过滤，为后续规则演进保留兼容入口。
 - `skipped_summary` 按原因聚合数量，并保留最多 3 个代表路径。
+- 对 `android/**` 下 Gradle、Manifest 和配置类文件做低权重保守索引，避免误跳过 Capacitor / Android 关键配置；W2 不做完整 Android / Capacitor 语义召回。
 - 轻量支持根目录 `.gitignore` 和 `.contextgateignore`：支持注释、空行、目录规则、基础 glob 和 `**`；暂不支持 `!` 反选和完整 Git ignore 语义。
 - `internal/compaction` 仅是占位 package，明确 W2 不做真实会话压缩。
 
@@ -193,7 +194,7 @@ make smoke
 W3+ 仍未实现：
 
 - SQLite FTS5 Memory Index 和 `memory-query`。
-- framework profile、role 分类、symbol index 和 hybrid rerank。
+- 完整 framework profile、role 分类、Android / Capacitor 语义召回、symbol index 和 hybrid rerank。
 - SQLite UsageMeter、weekly-report 和 usage-report。
 - JetBrains 插件真实状态、自检、安装引导逻辑。
 - MCP server 和外部 MCP client 端到端能力。

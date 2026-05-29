@@ -106,6 +106,56 @@ func TestMemoryScanOutput(t *testing.T) {
 	}
 }
 
+func TestMemoryScanShorthandPath(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	root := filepath.Join("..", "..", "testdata", "memory-scan-fixture")
+	code := run([]string{"memory-scan", root}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"skipped_summary"`) {
+		t.Fatalf("expected memory-scan JSON output, got %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+}
+
+func TestMemoryScanUnsupportedFormat(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	root := filepath.Join("..", "..", "testdata", "memory-scan-fixture")
+	code := run([]string{"memory-scan", "--root", root, "--format", "yaml"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for unsupported format")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout, got %q", stdout.String())
+	}
+	if got := stderr.String(); !strings.Contains(got, "unsupported memory-scan format") || !strings.Contains(got, "yaml") {
+		t.Fatalf("expected clear unsupported format stderr, got %q", got)
+	}
+}
+
+func TestMemoryScanMissingRootShowsUsage(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run([]string{"memory-scan"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for missing root")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout, got %q", stdout.String())
+	}
+	if got := stderr.String(); !strings.Contains(got, "usage: qiankun-mcpd memory-scan") || !strings.Contains(got, "--root <path>") {
+		t.Fatalf("expected memory-scan usage in stderr, got %q", got)
+	}
+}
+
 func TestUnknownArgumentReturnsError(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

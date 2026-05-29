@@ -39,6 +39,16 @@ func TestScanFixtureClassifiesAndSkipsNoise(t *testing.T) {
 		t.Fatalf("expected indexed high-weight package.json, got %+v", packageJSON)
 	}
 
+	androidGradle := mustEntry(t, result, "android/app/build.gradle")
+	if androidGradle.Skipped || androidGradle.Kind != KindConfig || androidGradle.Weight >= packageJSON.Weight || androidGradle.Weight >= mainFile.Weight {
+		t.Fatalf("expected indexed low-weight android Gradle config, got %+v", androidGradle)
+	}
+
+	androidManifest := mustEntry(t, result, "android/app/src/main/AndroidManifest.xml")
+	if androidManifest.Skipped || androidManifest.Kind != KindConfig || androidManifest.Weight != androidGradle.Weight {
+		t.Fatalf("expected indexed low-weight android manifest, got %+v", androidManifest)
+	}
+
 	readme := mustEntry(t, result, "README.md")
 	if readme.Skipped || readme.Kind != KindDocumentation || readme.Weight >= packageJSON.Weight {
 		t.Fatalf("expected indexed medium-weight README, got %+v", readme)
@@ -130,6 +140,34 @@ func TestScanLargeTextReadsTailSample(t *testing.T) {
 	if entry.TokenEstimate >= tokens.EstimateTextTokens(full) {
 		t.Fatalf("expected token estimate to use tail sample, got entry=%+v", entry)
 	}
+}
+
+func TestScanReadErrorDoesNotAbort(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write normal file: %v", err)
+	}
+
+	err := os.Symlink("missing-target.txt", filepath.Join(root, "broken.txt"))
+	if err != nil {
+		t.Skipf("symlink unsupported on this platform: %v", err)
+	}
+
+	result, err := Scan(Options{Root: root})
+	if err != nil {
+		t.Fatalf("Scan returned overall error for single read failure: %v", err)
+	}
+
+	normal := mustEntry(t, result, "main.go")
+	if normal.Skipped || normal.TokenEstimate == 0 {
+		t.Fatalf("expected normal file to remain indexed, got %+v", normal)
+	}
+
+	broken := mustEntry(t, result, "broken.txt")
+	if !broken.Skipped || broken.SkipReason != SkipReadError || broken.Error == "" {
+		t.Fatalf("expected broken symlink read_error entry, got %+v", broken)
+	}
+	assertSummary(t, result, SkipReadError)
 }
 
 func fixtureRoot(t *testing.T) string {

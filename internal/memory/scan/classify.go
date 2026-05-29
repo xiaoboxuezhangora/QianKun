@@ -19,6 +19,9 @@ func classifyFile(rel string) (FileKind, int, bool, string) {
 	if isBuildArtifactFile(rel) {
 		return KindBuildArtifact, 0, true, SkipBuildArtifact
 	}
+	if isAndroidConservativeConfig(rel) {
+		return KindConfig, 40, false, ""
+	}
 
 	kind := inferTextKind(rel)
 	return kind, weightForKind(kind), false, ""
@@ -123,6 +126,27 @@ func isBuildArtifactFile(rel string) bool {
 	ext := strings.ToLower(path.Ext(rel))
 	switch ext {
 	case ".map", ".class":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAndroidConservativeConfig(rel string) bool {
+	if !hasPathPrefix(rel, "android") {
+		return false
+	}
+
+	name := strings.ToLower(path.Base(rel))
+	ext := strings.ToLower(path.Ext(rel))
+	if name == "androidmanifest.xml" ||
+		name == "build.gradle" ||
+		name == "settings.gradle" ||
+		strings.HasSuffix(name, ".gradle.kts") {
+		return true
+	}
+	switch ext {
+	case ".gradle", ".xml", ".properties", ".json", ".yaml", ".yml", ".toml":
 		return true
 	default:
 		return false
