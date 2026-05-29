@@ -1,0 +1,10 @@
+{
+  "name": "memory-scan-fixture",
+  "version": "0.0.0",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "vue": "^3.0.0"
+  }
+}
