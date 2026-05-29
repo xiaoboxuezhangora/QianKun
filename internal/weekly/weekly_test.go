@@ -15,6 +15,7 @@ func TestMarkdownIncludesW3Sections(t *testing.T) {
 	for _, want := range []string{
 		"# QianKun Weekly Report",
 		"## Memory Index",
+		"## Recent Changes",
 		"## UsageMeter",
 		"## Instructions Lint",
 		"## W3 Known Gaps",

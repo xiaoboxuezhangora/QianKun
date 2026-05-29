@@ -22,7 +22,10 @@ smoke: test build
 	QIANKUN_HOME="$$tmp" ./$(BINARY) weekly-report --format markdown --instructions-root testdata/memory-scan-fixture > "$$tmp/weekly-report.md"; \
 	grep -q '## Memory Index' "$$tmp/weekly-report.md"; \
 	grep -q '## UsageMeter' "$$tmp/weekly-report.md"; \
-	grep -q '## Instructions Lint' "$$tmp/weekly-report.md"
+	grep -q '## Recent Changes' "$$tmp/weekly-report.md"; \
+	grep -q '## Instructions Lint' "$$tmp/weekly-report.md"; \
+	grep -qE '^- Files read: [1-9][0-9]*$$' "$$tmp/weekly-report.md"; \
+	grep -qE '^- Findings: [1-9][0-9]*$$' "$$tmp/weekly-report.md"
 
 test:
 	go test ./...

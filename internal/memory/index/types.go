@@ -28,6 +28,12 @@ type RootStats struct {
 	EstimatedTokens int    `json:"estimated_tokens"`
 }
 
+type RecentChange struct {
+	Path       string `json:"path"`
+	ChangeType string `json:"change_type"`
+	ChangedAt  string `json:"changed_at"`
+}
+
 type QueryResult struct {
 	Path          string  `json:"path"`
 	Kind          string  `json:"kind"`

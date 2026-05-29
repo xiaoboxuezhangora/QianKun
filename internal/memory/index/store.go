@@ -236,6 +236,33 @@ func (s *Store) RootStats(root string) (RootStats, error) {
 	return stats, nil
 }
 
+// RecentChanges 返回指定 root 最近的 upsert/delete 事件，按时间倒序，
+// 用于周报等读取侧消费 recent_change 表。limit <= 0 时回退到默认 10 条。
+func (s *Store) RecentChanges(root string, limit int) ([]RecentChange, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT path, change_type, changed_at FROM recent_change WHERE root = ? ORDER BY changed_at DESC, rowid DESC LIMIT ?`, absRoot, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var changes []RecentChange
+	for rows.Next() {
+		var change RecentChange
+		if err := rows.Scan(&change.Path, &change.ChangeType, &change.ChangedAt); err != nil {
+			return nil, err
+		}
+		changes = append(changes, change)
+	}
+	return changes, rows.Err()
+}
+
 type existingFile struct {
 	SizeBytes     int64
 	FileHash      string

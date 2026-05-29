@@ -13,6 +13,8 @@ import (
 	"github.com/xiaoboxuezhangora/QianKun/internal/usage"
 )
 
+const recentChangesLimit = 10
+
 type Options struct {
 	InstructionsRoot string
 }
@@ -27,7 +29,7 @@ func Markdown(opts Options) (string, error) {
 		return "", err
 	}
 
-	memoryStats, memorySync, memoryErr := buildMemoryStats(absRoot)
+	memoryStats, memorySync, memoryChanges, memoryErr := buildMemoryStats(absRoot)
 	usageReport, usageErr := buildUsageReport()
 	instructionsReport, instructionsErr := instructions.Lint(instructions.Options{Root: absRoot})
 
@@ -48,6 +50,22 @@ func Markdown(opts Options) (string, error) {
 		fmt.Fprintf(&buf, "- Estimated tokens: %d\n", memoryStats.EstimatedTokens)
 		fmt.Fprintf(&buf, "- Incremental sync: updated=%d unchanged=%d deleted=%d read_errors=%d\n",
 			memorySync.FilesUpdated, memorySync.FilesUnchanged, memorySync.FilesDeleted, memorySync.ReadErrors)
+	}
+	fmt.Fprintln(&buf)
+
+	fmt.Fprintln(&buf, "## Recent Changes")
+	if memoryErr != nil {
+		fmt.Fprintf(&buf, "- Status: degraded: %s\n", memoryErr)
+	} else if len(memoryChanges) == 0 {
+		fmt.Fprintln(&buf, "- No recorded changes yet.")
+	} else {
+		fmt.Fprintf(&buf, "- Showing latest %d of recorded upsert/delete events.\n", len(memoryChanges))
+		fmt.Fprintln(&buf)
+		fmt.Fprintln(&buf, "| Change | File | Changed at |")
+		fmt.Fprintln(&buf, "| --- | --- | --- |")
+		for _, change := range memoryChanges {
+			fmt.Fprintf(&buf, "| %s | `%s` | %s |\n", change.ChangeType, change.Path, change.ChangedAt)
+		}
 	}
 	fmt.Fprintln(&buf)
 
@@ -84,7 +102,7 @@ func Markdown(opts Options) (string, error) {
 	fmt.Fprintln(&buf)
 
 	fmt.Fprintln(&buf, "## W3 Known Gaps")
-	fmt.Fprintln(&buf, "- `recent_change` is schema-backed with minimal upsert/delete events only.")
+	fmt.Fprintln(&buf, "- `recent_change` records minimal upsert/delete events, surfaced in the Recent Changes section above (latest N only).")
 	fmt.Fprintln(&buf, "- `symbol` table exists for future work, but W3 does not perform LSP or framework symbol extraction.")
 	fmt.Fprintln(&buf, "- FTS5 is used when the SQLite driver supports it; otherwise keyword/LIKE-style scoring is used.")
 	fmt.Fprintln(&buf, "- W4+ items remain out of scope: full framework profile, hybrid rerank, MCP server, IDEA productization, and enterprise dashboard.")
@@ -92,23 +110,27 @@ func Markdown(opts Options) (string, error) {
 	return buf.String(), nil
 }
 
-func buildMemoryStats(root string) (index.RootStats, index.SyncStats, error) {
+func buildMemoryStats(root string) (index.RootStats, index.SyncStats, []index.RecentChange, error) {
 	store, err := index.Open(index.Options{})
 	if err != nil {
-		return index.RootStats{}, index.SyncStats{}, err
+		return index.RootStats{}, index.SyncStats{}, nil, err
 	}
 	defer store.Close()
 
 	result, err := scan.Scan(scan.Options{Root: root})
 	if err != nil {
-		return index.RootStats{}, index.SyncStats{}, err
+		return index.RootStats{}, index.SyncStats{}, nil, err
 	}
 	syncStats, err := store.SyncScan(result)
 	if err != nil {
-		return index.RootStats{}, syncStats, err
+		return index.RootStats{}, syncStats, nil, err
 	}
 	stats, err := store.RootStats(root)
-	return stats, syncStats, err
+	if err != nil {
+		return stats, syncStats, nil, err
+	}
+	changes, err := store.RecentChanges(root, recentChangesLimit)
+	return stats, syncStats, changes, err
 }
 
 func buildUsageReport() (usage.Report, error) {

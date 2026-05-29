@@ -70,6 +70,35 @@ func TestRootStats(t *testing.T) {
 	}
 }
 
+func TestRecentChanges(t *testing.T) {
+	store := openTestStore(t)
+	defer store.Close()
+
+	result := scanFixture(t)
+	if _, err := store.SyncScan(result); err != nil {
+		t.Fatalf("SyncScan failed: %v", err)
+	}
+
+	changes, err := store.RecentChanges(result.Root, 5)
+	if err != nil {
+		t.Fatalf("RecentChanges failed: %v", err)
+	}
+	if len(changes) == 0 {
+		t.Fatalf("expected recorded changes after first sync")
+	}
+	if len(changes) > 5 {
+		t.Fatalf("expected limit to cap results at 5, got %d", len(changes))
+	}
+	for _, change := range changes {
+		if change.ChangeType != "upsert" {
+			t.Fatalf("expected upsert change on first sync, got %+v", change)
+		}
+		if change.Path == "" || change.ChangedAt == "" {
+			t.Fatalf("expected populated change fields, got %+v", change)
+		}
+	}
+}
+
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := Open(Options{DBPath: filepath.Join(t.TempDir(), "memory.sqlite")})
