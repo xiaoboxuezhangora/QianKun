@@ -7,7 +7,11 @@ smoke: test build
 	trap 'rm -rf "$$tmp"' EXIT; \
 	QIANKUN_HOME="$$tmp" ./$(BINARY) --health > "$$tmp/health.json"; \
 	grep -q '"status":"ready"' "$$tmp/health.json"; \
-	grep -q '"toolcache":' "$$tmp/health.json"
+	grep -q '"toolcache":' "$$tmp/health.json"; \
+	./$(BINARY) memory-scan --root testdata/memory-scan-fixture --format json > "$$tmp/memory-scan.json"; \
+	grep -q '"files_indexed":' "$$tmp/memory-scan.json"; \
+	grep -q '"skipped_summary":' "$$tmp/memory-scan.json"; \
+	grep -q '"path": "src/main.ts"' "$$tmp/memory-scan.json"
 
 test:
 	go test ./...
