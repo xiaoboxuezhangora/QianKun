@@ -12,10 +12,11 @@ type Report struct {
 }
 
 type Finding struct {
-	Severity string `json:"severity"`
-	Rule     string `json:"rule"`
-	File     string `json:"file"`
-	Line     int    `json:"line,omitempty"`
-	Message  string `json:"message"`
-	Excerpt  string `json:"excerpt,omitempty"`
+	Severity   string `json:"severity"`
+	Rule       string `json:"rule"`
+	File       string `json:"file"`
+	Line       int    `json:"line,omitempty"`
+	Message    string `json:"message"`
+	Suggestion string `json:"suggestion,omitempty"`
+	Excerpt    string `json:"excerpt,omitempty"`
 }
