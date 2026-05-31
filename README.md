@@ -119,6 +119,40 @@ curl -fsSL https://raw.githubusercontent.com/xiaoboxuezhangora/QianKun/main/scri
 curl -fsSL https://raw.githubusercontent.com/xiaoboxuezhangora/QianKun/main/scripts/uninstall.sh | bash -s -- --purge
 ```
 
+### 预编译产物（手动安装）
+
+无 Go 环境也可从 [Releases](https://github.com/xiaoboxuezhangora/QianKun/releases) 手动下载对应平台二进制。所有产物为纯 Go、无需 CGO 的静态可执行文件，拷贝即用。
+
+| 平台 | 产物文件 |
+| --- | --- |
+| macOS Apple Silicon | `qiankun-mcpd-<version>-darwin-arm64` |
+| macOS Intel | `qiankun-mcpd-<version>-darwin-amd64` |
+| Linux x86_64 | `qiankun-mcpd-<version>-linux-amd64` |
+| Linux arm64 | `qiankun-mcpd-<version>-linux-arm64` |
+| Windows x86_64 | `qiankun-mcpd-<version>-windows-amd64.exe` |
+
+安装与校验（以 macOS Apple Silicon 为例）：
+
+```bash
+# 1. 校验 SHA-256（Release 附带 checksums.txt）
+shasum -a 256 -c checksums.txt
+# 2. 赋可执行权限并放入 PATH
+chmod +x qiankun-mcpd-0.4.0-w4-darwin-arm64
+sudo mv qiankun-mcpd-0.4.0-w4-darwin-arm64 /usr/local/bin/qiankun-mcpd
+# 3. macOS 首次运行解除 Gatekeeper 隔离（二进制未签名）
+xattr -d com.apple.quarantine /usr/local/bin/qiankun-mcpd 2>/dev/null || true
+# 4. 验证
+qiankun-mcpd --version   # 0.4.0-w4
+```
+
+如需在有 Go 的机器上自行交叉编译（一台机器即可全平台出包，无需目标平台工具链）：
+
+```bash
+GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
+  -o dist/qiankun-mcpd-darwin-arm64 ./cmd/qiankun-mcpd
+# 将 GOOS/GOARCH 替换为 linux/amd64、linux/arm64、windows/amd64 等即可。
+```
+
 目标验证命令：
 
 ```bash
