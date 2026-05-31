@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/xiaoboxuezhangora/QianKun/internal/memory/tokens"
@@ -44,6 +45,7 @@ func Scan(opts Options) (Result, error) {
 		exclude:    patternSet(opts.Exclude),
 		ignores:    loadIgnoreRules(root),
 		hasInclude: len(opts.Include) > 0,
+		springApp:  make(map[string]bool),
 		result: Result{
 			Root:           root,
 			GeneratedAt:    generatedAt,
@@ -58,6 +60,7 @@ func Scan(opts Options) (Result, error) {
 	sort.SliceStable(state.result.Files, func(i, j int) bool {
 		return state.result.Files[i].Path < state.result.Files[j].Path
 	})
+	state.assignProfilesAndRoles()
 	return state.result, nil
 }
 
@@ -67,7 +70,20 @@ type scannerState struct {
 	exclude    patternSet
 	ignores    []ignoreRule
 	hasInclude bool
+	springApp  map[string]bool // 含 @SpringBootApplication 的源文件相对路径集合
 	result     Result
+}
+
+// assignProfilesAndRoles 在遍历完成后统一为每个文件填充真实 profile 与 role：
+// profile 需要全量文件视角（marker + 语言分布）才能判定，故放在 walk 之后；
+// role 由相对路径与文件分档纯启发式得出，与 profile 解耦。
+func (s *scannerState) assignProfilesAndRoles() {
+	profiles := detectProfiles(s.result.Files, s.springApp)
+	for i := range s.result.Files {
+		f := &s.result.Files[i]
+		f.Profile = profileForPath(profiles, f.Path)
+		f.Role = roleForRel(f.Path, f.Kind)
+	}
 }
 
 func (s *scannerState) walk(path string, d fs.DirEntry, walkErr error) error {
@@ -128,8 +144,6 @@ func (s *scannerState) walk(path string, d fs.DirEntry, walkErr error) error {
 	entry := FileEntry{
 		Path:      rel,
 		SizeBytes: info.Size(),
-		Profile:   "unknown",
-		Role:      "unknown",
 	}
 
 	if s.exclude.match(rel) {
@@ -187,8 +201,17 @@ func (s *scannerState) walk(path string, d fs.DirEntry, walkErr error) error {
 	entry.Sampled = sampled
 	entry.SampleBytes = sampleBytes
 	entry.TokenEstimate = tokens.EstimateTextTokens(sample)
+	// 记录 Spring Boot 入口信号，供 profile 检测使用（@SpringBootApplication 位于文件头部）。
+	if isJavaLike(rel) && strings.Contains(sample, "@SpringBootApplication") {
+		s.springApp[rel] = true
+	}
 	s.addIndexedFile(entry)
 	return nil
+}
+
+func isJavaLike(rel string) bool {
+	lower := strings.ToLower(rel)
+	return strings.HasSuffix(lower, ".java") || strings.HasSuffix(lower, ".kt")
 }
 
 func readTextSample(path string, size int64) (string, int, bool, error) {

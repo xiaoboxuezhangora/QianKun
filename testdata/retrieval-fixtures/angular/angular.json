@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "projects": {
+    "app": {
+      "projectType": "application",
+      "root": ""
+    }
+  }
+}
