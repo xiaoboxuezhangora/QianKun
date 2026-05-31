@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
-	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -18,6 +17,7 @@ type indexedFile struct {
 	TokenEstimate int
 	SizeBytes     int64
 	ContentSample string
+	Role          string
 	KeywordCount  int
 }
 
@@ -31,7 +31,7 @@ func (s *Store) Query(root, query string, topK int) (QueryResponse, error) {
 	}
 	terms := tokenize(query)
 
-	files, err := s.queryFTS(absRoot, terms, topK*8)
+	files, err := s.queryFTS(absRoot, terms, topK*recallMultiplier)
 	if err != nil || len(files) == 0 {
 		files, err = s.queryKeywordFallback(absRoot, terms)
 		if err != nil {
@@ -39,13 +39,74 @@ func (s *Store) Query(root, query string, topK int) (QueryResponse, error) {
 		}
 	}
 
-	results := rankFiles(files, terms, topK)
+	results, err := s.hybridRank(absRoot, files, query, terms, topK)
+	if err != nil {
+		return QueryResponse{}, err
+	}
 	return QueryResponse{
 		Root:    absRoot,
 		Query:   query,
 		TopK:    topK,
 		Results: results,
 	}, nil
+}
+
+// hybridRank 在召回候选上计算 Rel，再以 MMR rerank 选出 topK。
+// 召回来源（FTS 或 keyword 回退）对本函数透明，降级路径行为一致。
+func (s *Store) hybridRank(root string, files []indexedFile, query string, terms []string, topK int) ([]QueryResult, error) {
+	if len(files) == 0 {
+		return []QueryResult{}, nil
+	}
+	intent := detectIntent(query)
+
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.Path)
+	}
+	symbolsByPath, err := s.loadSymbols(root, paths)
+	if err != nil {
+		return nil, err
+	}
+
+	cands := make([]scoredFile, 0, len(files))
+	for _, f := range files {
+		syms := symbolsByPath[f.Path]
+		rel := computeRel(f, syms, terms, intent)
+		if rel <= 0 {
+			// 噪声/无关候选不进入 rerank，满足“默认不进 top-k”。
+			continue
+		}
+		cands = append(cands, scoredFile{
+			file:     f,
+			syms:     syms,
+			rel:      rel,
+			segments: pathSegments(f.Path),
+			termSet:  fileTermSet(f),
+		})
+	}
+
+	ranked := rerankMMR(cands, topK)
+	results := make([]QueryResult, 0, len(ranked))
+	for _, c := range ranked {
+		results = append(results, QueryResult{
+			Path:          c.file.Path,
+			Kind:          c.file.Kind,
+			Weight:        c.file.Weight,
+			Score:         math.Round(c.rel*100) / 100,
+			TokenEstimate: c.file.TokenEstimate,
+			Snippet:       makeSnippet(c.file, terms),
+		})
+	}
+	return results, nil
+}
+
+// fileTermSet 计算文件的词元集合，用于 MMR 的 Jaccard 相似度。
+func fileTermSet(f indexedFile) map[string]bool {
+	set := make(map[string]bool)
+	for _, term := range tokenize(f.Path + " " + f.ContentSample) {
+		set[term] = true
+	}
+	return set
 }
 
 func (s *Store) queryFTS(root string, terms []string, limit int) ([]indexedFile, error) {
@@ -56,7 +117,7 @@ func (s *Store) queryFTS(root string, terms []string, limit int) ([]indexedFile,
 		limit = 64
 	}
 	ftsQuery := makeFTSQuery(terms)
-	rows, err := s.db.Query(`SELECT fs.path, fs.kind, fs.weight, fs.token_estimate, fs.size_bytes, fs.content_sample
+	rows, err := s.db.Query(`SELECT fs.path, fs.kind, fs.weight, fs.token_estimate, fs.size_bytes, fs.content_sample, fs.role
 		FROM file_fts AS ft
 		JOIN file_summary AS fs ON fs.root = ft.root AND fs.path = ft.path
 		WHERE file_fts MATCH ? AND ft.root = ?
@@ -69,7 +130,7 @@ func (s *Store) queryFTS(root string, terms []string, limit int) ([]indexedFile,
 	var files []indexedFile
 	for rows.Next() {
 		var file indexedFile
-		if err := rows.Scan(&file.Path, &file.Kind, &file.Weight, &file.TokenEstimate, &file.SizeBytes, &file.ContentSample); err != nil {
+		if err := rows.Scan(&file.Path, &file.Kind, &file.Weight, &file.TokenEstimate, &file.SizeBytes, &file.ContentSample, &file.Role); err != nil {
 			return nil, err
 		}
 		files = append(files, file)
@@ -78,12 +139,18 @@ func (s *Store) queryFTS(root string, terms []string, limit int) ([]indexedFile,
 }
 
 func (s *Store) queryKeywordFallback(root string, terms []string) ([]indexedFile, error) {
+	// 召回集：命中任意词项的路径（含 from_symbol=1 的符号词项），保证符号可被召回。
+	recall, err := s.recallPaths(root, terms)
+	if err != nil {
+		return nil, err
+	}
+	// 计数：仅统计基础词项（from_symbol=0），作为 keywordCount。
 	keywordCounts, err := s.keywordCounts(root, terms)
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := s.db.Query(`SELECT path, kind, weight, token_estimate, size_bytes, content_sample FROM file_summary WHERE root = ?`, root)
+	rows, err := s.db.Query(`SELECT path, kind, weight, token_estimate, size_bytes, content_sample, role FROM file_summary WHERE root = ?`, root)
 	if err != nil {
 		return nil, err
 	}
@@ -92,19 +159,47 @@ func (s *Store) queryKeywordFallback(root string, terms []string) ([]indexedFile
 	var files []indexedFile
 	for rows.Next() {
 		var file indexedFile
-		if err := rows.Scan(&file.Path, &file.Kind, &file.Weight, &file.TokenEstimate, &file.SizeBytes, &file.ContentSample); err != nil {
+		if err := rows.Scan(&file.Path, &file.Kind, &file.Weight, &file.TokenEstimate, &file.SizeBytes, &file.ContentSample, &file.Role); err != nil {
 			return nil, err
 		}
-		if len(keywordCounts) > 0 {
-			count, ok := keywordCounts[file.Path]
-			if !ok {
+		if len(recall) > 0 {
+			if !recall[file.Path] {
 				continue
 			}
-			file.KeywordCount = count
 		}
+		file.KeywordCount = keywordCounts[file.Path]
 		files = append(files, file)
 	}
 	return files, rows.Err()
+}
+
+// recallPaths 返回命中任意词项的路径集合，不区分 from_symbol，用于召回。
+func (s *Store) recallPaths(root string, terms []string) (map[string]bool, error) {
+	if len(terms) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(terms))
+	args := make([]any, 0, len(terms)+1)
+	args = append(args, root)
+	for i, term := range terms {
+		placeholders[i] = "?"
+		args = append(args, term)
+	}
+	rows, err := s.db.Query(fmt.Sprintf(`SELECT DISTINCT path FROM keyword_index WHERE root = ? AND term IN (%s)`, strings.Join(placeholders, ",")), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]bool)
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		result[path] = true
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) keywordCounts(root string, terms []string) (map[string]int, error) {
@@ -118,7 +213,9 @@ func (s *Store) keywordCounts(root string, terms []string) (map[string]int, erro
 		placeholders[i] = "?"
 		args = append(args, term)
 	}
-	rows, err := s.db.Query(fmt.Sprintf(`SELECT path, SUM(count) FROM keyword_index WHERE root = ? AND term IN (%s) GROUP BY path`, strings.Join(placeholders, ",")), args...)
+	// from_symbol=0 过滤掉折入的符号词项：符号信号由 SymbolScore 显式计入，
+	// 不让其重复进入 keywordCount 以保持 Rel 可解释。
+	rows, err := s.db.Query(fmt.Sprintf(`SELECT path, SUM(count) FROM keyword_index WHERE root = ? AND from_symbol = 0 AND term IN (%s) GROUP BY path`, strings.Join(placeholders, ",")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -134,57 +231,6 @@ func (s *Store) keywordCounts(root string, terms []string) (map[string]int, erro
 		result[path] = count
 	}
 	return result, rows.Err()
-}
-
-func rankFiles(files []indexedFile, terms []string, topK int) []QueryResult {
-	results := make([]QueryResult, 0, len(files))
-	for _, file := range files {
-		score := scoreFile(file, terms)
-		results = append(results, QueryResult{
-			Path:          file.Path,
-			Kind:          file.Kind,
-			Weight:        file.Weight,
-			Score:         math.Round(score*100) / 100,
-			TokenEstimate: file.TokenEstimate,
-			Snippet:       makeSnippet(file, terms),
-		})
-	}
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].Score == results[j].Score {
-			return results[i].Path < results[j].Path
-		}
-		return results[i].Score > results[j].Score
-	})
-	if topK > len(results) {
-		topK = len(results)
-	}
-	return results[:topK]
-}
-
-func scoreFile(file indexedFile, terms []string) float64 {
-	score := float64(file.Weight)
-	lowerPath := strings.ToLower(file.Path)
-	lowerKind := strings.ToLower(file.Kind)
-	lowerContent := strings.ToLower(file.ContentSample)
-	for _, term := range terms {
-		if strings.Contains(lowerPath, term) {
-			score += 35
-		}
-		if strings.Contains(lowerKind, term) {
-			score += 10
-		}
-		if count := strings.Count(lowerContent, term); count > 0 {
-			score += math.Min(float64(count), 5) * 12
-		}
-	}
-	score += float64(file.KeywordCount) * 4
-	if file.SizeBytes > 32*1024 {
-		score -= math.Min(float64(file.SizeBytes)/(32*1024), 20)
-	}
-	if score < 0 {
-		return 0
-	}
-	return score
 }
 
 func makeSnippet(file indexedFile, terms []string) string {

@@ -9,10 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/xiaoboxuezhangora/QianKun/internal/localdb"
 	"github.com/xiaoboxuezhangora/QianKun/internal/memory/scan"
+	"github.com/xiaoboxuezhangora/QianKun/internal/memory/symbols"
 )
 
 const memoryDBName = "memory.sqlite"
@@ -121,6 +123,21 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		}
 	}
 
+	// 向后兼容迁移：keyword_index 增加 from_symbol 标记列。
+	// from_symbol=1 的词项仅供召回（如折入的符号名），不计入 keywordCount，
+	// 避免符号项重复进入 Rel 而扭曲可解释性。旧库 ALTER 后默认 0，语义不变。
+	if err := s.ensureColumn(ctx, "keyword_index", "from_symbol",
+		`ALTER TABLE keyword_index ADD COLUMN from_symbol INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+
+	// 向后兼容迁移：file_summary 增加 role 列，承载扫描期分配的真实职责标签。
+	// 旧库 ALTER 后默认空串，检索侧噪声判定会回退到路径启发，语义不变。
+	if err := s.ensureColumn(ctx, "file_summary", "role",
+		`ALTER TABLE file_summary ADD COLUMN role TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+
 	// FTS5 availability depends on the SQLite library compiled into the driver.
 	// When unavailable, W3 keeps keyword_index + LIKE scoring as a deterministic fallback.
 	if _, err := s.db.ExecContext(ctx, `CREATE VIRTUAL TABLE IF NOT EXISTS file_fts USING fts5(root UNINDEXED, path, kind UNINDEXED, content_sample, tokenize='unicode61')`); err == nil {
@@ -131,6 +148,36 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		_, _ = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key, value) VALUES('fts5_enabled', 'false')`)
 	}
 	return nil
+}
+
+// ensureColumn 在列缺失时执行 ddl 添加列，幂等且向后兼容。
+func (s *Store) ensureColumn(ctx context.Context, table, column, ddl string) error {
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notNull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return rows.Close()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, ddl)
+	return err
 }
 
 func (s *Store) SyncScan(result scan.Result) (SyncStats, error) {
@@ -190,12 +237,18 @@ func (s *Store) SyncScan(result scan.Result) (SyncStats, error) {
 			continue
 		}
 
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO file_summary(root, path, kind, weight, token_estimate, size_bytes, content_sample, file_hash, mtime_unix_nano, updated_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			root, entry.Path, string(entry.Kind), entry.Weight, entry.TokenEstimate, entry.SizeBytes, sample, fileHash, mtime, now); err != nil {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO file_summary(root, path, kind, weight, token_estimate, size_bytes, content_sample, file_hash, mtime_unix_nano, updated_at, role)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			root, entry.Path, string(entry.Kind), entry.Weight, entry.TokenEstimate, entry.SizeBytes, sample, fileHash, mtime, now, entry.Role); err != nil {
 			return stats, err
 		}
-		if err := s.replaceSearchRows(tx, root, entry.Path, string(entry.Kind), sample); err != nil {
+		// Symbol Index v0：从文件头部提取符号，写入 symbol 表并把符号名折入召回。
+		// 整个 upsert 路径每次都重建（先删后插），保证 re-index 幂等。
+		syms := symbols.ExtractFromFile(fullPath, entry.Path)
+		if err := s.replaceSearchRows(tx, root, entry.Path, string(entry.Kind), sample, symbolTermsFrom(syms)); err != nil {
+			return stats, err
+		}
+		if err := s.replaceSymbols(tx, root, entry.Path, syms, now); err != nil {
 			return stats, err
 		}
 		if err := insertRecentChange(tx, root, entry.Path, "upsert", now); err != nil {
@@ -288,22 +341,67 @@ func (s *Store) loadExisting(root string) (map[string]existingFile, error) {
 	return result, rows.Err()
 }
 
-func (s *Store) replaceSearchRows(tx *sql.Tx, root, path, kind, sample string) error {
+// replaceSearchRows 重建指定文件的召回行。symbolTerms 为折入召回的符号词项：
+//   - 折入 FTS 文档（content_sample 后追加），使符号名可被 FTS 命中；
+//   - 以 from_symbol=1 写入 keyword_index，仅供 keyword 回退召回，不计入 keywordCount。
+func (s *Store) replaceSearchRows(tx *sql.Tx, root, path, kind, sample string, symbolTerms []string) error {
 	if err := s.deleteSearchRows(tx, root, path); err != nil {
 		return err
 	}
 	if s.fts5Enabled {
-		if _, err := tx.Exec(`INSERT INTO file_fts(root, path, kind, content_sample) VALUES(?, ?, ?, ?)`, root, path, kind, sample); err != nil {
+		ftsDoc := sample
+		if len(symbolTerms) > 0 {
+			ftsDoc = sample + " " + strings.Join(symbolTerms, " ")
+		}
+		if _, err := tx.Exec(`INSERT INTO file_fts(root, path, kind, content_sample) VALUES(?, ?, ?, ?)`, root, path, kind, ftsDoc); err != nil {
 			return err
 		}
 	}
+	// 基础词项：来自路径/kind/正文，from_symbol=0，是 keywordCount 的唯一来源。
 	terms := termCounts(path + " " + kind + " " + sample)
 	for term, count := range terms {
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO keyword_index(root, path, term, count) VALUES(?, ?, ?, ?)`, root, path, term, count); err != nil {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO keyword_index(root, path, term, count, from_symbol) VALUES(?, ?, ?, ?, 0)`, root, path, term, count); err != nil {
+			return err
+		}
+	}
+	// 符号词项：OR IGNORE 保证已存在的基础词项（from_symbol=0）优先，
+	// 符号专有词项才以 from_symbol=1 落库，不抬高已有计数。
+	for _, term := range symbolTerms {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO keyword_index(root, path, term, count, from_symbol) VALUES(?, ?, ?, 1, 1)`, root, path, term); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// replaceSymbols 重建指定文件的 symbol 行（先删后插），保证 re-index 幂等。
+func (s *Store) replaceSymbols(tx *sql.Tx, root, path string, syms []symbols.Symbol, now string) error {
+	if _, err := tx.Exec(`DELETE FROM symbol WHERE root = ? AND path = ?`, root, path); err != nil {
+		return err
+	}
+	for _, sym := range syms {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO symbol(root, path, symbol_name, symbol_kind, line, weight, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?)`, root, path, sym.Name, string(sym.Kind), sym.Line, sym.Weight, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// symbolTermsFrom 把符号名拆词、去重，作为折入召回的词项集合。
+func symbolTermsFrom(syms []symbols.Symbol) []string {
+	seen := make(map[string]bool)
+	var terms []string
+	for _, sym := range syms {
+		for _, term := range tokenize(sym.Name) {
+			if seen[term] {
+				continue
+			}
+			seen[term] = true
+			terms = append(terms, term)
+		}
+	}
+	return terms
 }
 
 func (s *Store) deletePath(tx *sql.Tx, root, path string) error {

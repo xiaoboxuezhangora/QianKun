@@ -1,5 +1,7 @@
 package index
 
+import "github.com/xiaoboxuezhangora/QianKun/internal/memory/commands"
+
 type Options struct {
 	DBPath string
 }
@@ -48,4 +50,6 @@ type QueryResponse struct {
 	Query   string        `json:"query"`
 	TopK    int           `json:"top_k"`
 	Results []QueryResult `json:"results"`
+	// Commands 是命令发现的结果，作为查询上下文一并返回；为空时省略，保持向后兼容。
+	Commands []commands.Command `json:"commands,omitempty"`
 }
