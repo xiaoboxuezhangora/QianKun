@@ -93,7 +93,17 @@ CLI 状态：
 | `qiankun-mcpd weekly-report --format markdown --instructions-root <path>` | 输出 token、cache、Memory、Saved vs Overhead、Instructions 周报 | 已实现，支持 `--output <file>` |
 | `qiankun-mcpd mcp` | 以 stdio 启动最小 MCP server，暴露 `memory-query`/`usage-report` | W4 已实现，端到端 Go 测试覆盖 |
 
-安装命令：
+安装方式：
+
+一键安装（无需 Go 环境，自动识别 macOS / Linux 平台，从 GitHub Release 下载预编译二进制并校验 SHA-256）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xiaoboxuezhangora/QianKun/main/scripts/install.sh | bash
+```
+
+可选环境变量：`QIANKUN_VERSION`（指定版本 tag，默认最新 release）、`QIANKUN_INSTALL_DIR`（指定安装目录，默认 `/usr/local/bin` 或 `~/.local/bin`）。Windows 用户请从 [Releases](https://github.com/xiaoboxuezhangora/QianKun/releases) 手动下载 `.exe`。
+
+有 Go 环境时也可源码安装：
 
 ```bash
 go install github.com/xiaoboxuezhangora/QianKun/cmd/qiankun-mcpd@latest
