@@ -5,10 +5,12 @@
 # 可选环境变量：
 #   QIANKUN_VERSION       指定版本 tag（默认安装最新 release），如 v0.4.0-w4
 #   QIANKUN_INSTALL_DIR   安装目录（默认 /usr/local/bin 可写时用之，否则 ~/.local/bin）
+#   QIANKUN_GH_PROXY      GitHub 下载镜像前缀（国内网络用），如 https://ghproxy.com/
 set -euo pipefail
 
 REPO="xiaoboxuezhangora/QianKun"
 BIN="qiankun-mcpd"
+PROXY="${QIANKUN_GH_PROXY:-}"
 
 info()  { printf '\033[0;32m==>\033[0m %s\n' "$*"; }
 warn()  { printf '\033[0;33m警告:\033[0m %s\n' "$*" >&2; }
@@ -17,6 +19,12 @@ die()   { printf '\033[0;31m错误:\033[0m %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "缺少依赖命令：$1"; }
 need uname
 need curl
+
+# 给 github.com 下载链接套上镜像前缀（设置 QIANKUN_GH_PROXY 时）
+ghurl() { if [ -n "$PROXY" ]; then printf '%s%s' "${PROXY%/}/" "$1"; else printf '%s' "$1"; fi; }
+# 带连接/总时长超时与重试的 curl，避免网络不通时一直卡住
+CURL=(curl -fSL --connect-timeout 20 --max-time 600 --retry 2 --retry-delay 1)
+CURLS=(curl -fsSL --connect-timeout 15 --retry 2)
 
 # 1. 识别平台
 os_raw="$(uname -s)"
@@ -37,9 +45,15 @@ info "检测到平台：${os}-${arch}"
 tag="${QIANKUN_VERSION:-}"
 if [ -z "$tag" ]; then
   info "查询最新 release..."
-  tag="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+  tag="$("${CURLS[@]}" "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
     | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name" *: *"([^"]+)".*/\1/')"
-  [ -n "$tag" ] || die "无法获取最新版本，请用 QIANKUN_VERSION 指定，如 v0.4.0-w4"
+  if [ -z "$tag" ]; then
+    warn "GitHub API 不可达，改用 jsDelivr 查询版本..."
+    ver="$("${CURLS[@]}" "https://data.jsdelivr.com/v1/packages/gh/${REPO}" 2>/dev/null \
+      | grep -m1 '"version"' | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')"
+    [ -n "$ver" ] && tag="v${ver}"
+  fi
+  [ -n "$tag" ] || die "无法获取最新版本，请用 QIANKUN_VERSION 指定（如 v0.4.0-w4），或设置 QIANKUN_GH_PROXY 镜像"
 fi
 version="${tag#v}"   # 去掉前导 v 以匹配产物文件名
 asset="${BIN}-${version}-${os}-${arch}"
@@ -48,13 +62,14 @@ info "目标版本：${tag}（产物 ${asset}）"
 base="https://github.com/${REPO}/releases/download/${tag}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+[ -n "$PROXY" ] && info "使用 GitHub 镜像：$PROXY"
 
 # 3. 下载二进制与校验和
 info "下载二进制..."
-curl -fSL --progress-bar "${base}/${asset}" -o "${tmp}/${asset}" \
-  || die "下载失败：${base}/${asset}"
+"${CURL[@]}" --progress-bar "$(ghurl "${base}/${asset}")" -o "${tmp}/${asset}" \
+  || die "下载失败：$(ghurl "${base}/${asset}")（国内网络不通时请设置 QIANKUN_GH_PROXY 镜像后重试）"
 
-if curl -fsSL "${base}/checksums.txt" -o "${tmp}/checksums.txt" 2>/dev/null; then
+if "${CURLS[@]}" "$(ghurl "${base}/checksums.txt")" -o "${tmp}/checksums.txt" 2>/dev/null; then
   info "校验 SHA-256..."
   expected="$(grep " ${asset}\$" "${tmp}/checksums.txt" | awk '{print $1}')"
   if [ -n "$expected" ]; then

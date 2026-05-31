@@ -101,7 +101,16 @@ CLI 状态：
 curl -fsSL https://raw.githubusercontent.com/xiaoboxuezhangora/QianKun/main/scripts/install.sh | bash
 ```
 
-可选环境变量：`QIANKUN_VERSION`（指定版本 tag，默认最新 release）、`QIANKUN_INSTALL_DIR`（指定安装目录，默认 `/usr/local/bin` 或 `~/.local/bin`）。Windows 用户请从 [Releases](https://github.com/xiaoboxuezhangora/QianKun/releases) 手动下载 `.exe`。
+可选环境变量：`QIANKUN_VERSION`（指定版本 tag，默认最新 release）、`QIANKUN_INSTALL_DIR`（指定安装目录，默认 `/usr/local/bin` 或 `~/.local/bin`）、`QIANKUN_GH_PROXY`（GitHub 下载镜像前缀，国内网络用）。Windows 用户请从 [Releases](https://github.com/xiaoboxuezhangora/QianKun/releases) 手动下载 `.exe`。
+
+> 国内网络若出现 `curl: (28) ... timeout`（连不上 `raw.githubusercontent.com` / `github.com`），可经 jsDelivr 取脚本并用镜像下载二进制：
+>
+> ```bash
+> export QIANKUN_GH_PROXY=https://ghproxy.com/   # 换成任一可用的 GitHub 镜像
+> curl -fsSL https://cdn.jsdelivr.net/gh/xiaoboxuezhangora/QianKun@main/scripts/install.sh | bash
+> ```
+>
+> 脚本已内置连接超时与重试，连不通会快速报错而非长时间卡住；版本号在 GitHub API 不可达时自动回退到 jsDelivr 查询。公共镜像时好时坏，建议用自己可用的代理/镜像。
 
 有 Go 环境时也可源码安装：
 
