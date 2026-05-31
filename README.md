@@ -103,14 +103,23 @@ curl -fsSL https://raw.githubusercontent.com/xiaoboxuezhangora/QianKun/main/scri
 
 可选环境变量：`QIANKUN_VERSION`（指定版本 tag，默认最新 release）、`QIANKUN_INSTALL_DIR`（指定安装目录，默认 `/usr/local/bin` 或 `~/.local/bin`）、`QIANKUN_GH_PROXY`（GitHub 下载镜像前缀，国内网络用）。Windows 用户请从 [Releases](https://github.com/xiaoboxuezhangora/QianKun/releases) 手动下载 `.exe`。
 
-> 国内网络若出现 `curl: (28) ... timeout`（连不上 `raw.githubusercontent.com` / `github.com`），可经 jsDelivr 取脚本并用镜像下载二进制：
+> 国内网络若出现 `curl: (28)/(56) ... timeout`（连不上 `raw.githubusercontent.com` / `github.com`），**不要再用上面的 raw 链接**，改用以下任一方式。
+>
+> 方式一 —— 经 jsDelivr 取脚本 + 镜像下载二进制：
 >
 > ```bash
-> export QIANKUN_GH_PROXY=https://ghproxy.com/   # 换成任一可用的 GitHub 镜像
+> export QIANKUN_GH_PROXY=https://ghproxy.net/   # 备选 https://gh-proxy.com/ 或 https://gh.ddlc.top/
 > curl -fsSL https://cdn.jsdelivr.net/gh/xiaoboxuezhangora/QianKun@main/scripts/install.sh | bash
 > ```
 >
-> 脚本已内置连接超时与重试，连不通会快速报错而非长时间卡住；版本号在 GitHub API 不可达时自动回退到 jsDelivr 查询。公共镜像时好时坏，建议用自己可用的代理/镜像。
+> 方式二（最稳）—— 本机有代理（Clash/V2Ray 等）时设好代理再用原始命令：
+>
+> ```bash
+> export https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890 all_proxy=socks5://127.0.0.1:7890
+> curl -fsSL https://raw.githubusercontent.com/xiaoboxuezhangora/QianKun/main/scripts/install.sh | bash
+> ```
+>
+> 脚本已内置连接超时与重试，连不通会快速报错而非长时间卡住；版本号在 GitHub API 不可达时自动回退到 jsDelivr 查询。公共镜像时好时坏，上面的镜像若失效可换其他可用镜像。
 
 有 Go 环境时也可源码安装：
 
