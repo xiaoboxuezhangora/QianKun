@@ -1,0 +1,16 @@
+{
+  "name": "command-fixture",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite --open",
+    "build": "vite build",
+    "preview": "vite preview",
+    "build-only": "vite build",
+    "type-check": "vue-tsc --noEmit",
+    "lint": "eslint . --ext .vue,.ts --fix",
+    "sync-android": "pnpm run build && npx cap sync android",
+    "open-android": "pnpm run build && npx cap sync android && npx cap open android",
+    "build-debug-apk": "jetpack build android -x -v -l",
+    "build-release-apk": "jetpack build android -x -r -v -l"
+  }
+}

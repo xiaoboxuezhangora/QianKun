@@ -1,0 +1,6 @@
+{
+  "appId": "com.example.fixture",
+  "appName": "fixture",
+  "webDir": "dist",
+  "buildScript": "build"
+}
