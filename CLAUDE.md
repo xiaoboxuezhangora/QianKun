@@ -23,19 +23,20 @@
 
 ## 当前阶段
 
-仓库处于 **Phase W3**，版本 `0.3.0-w3`。已落地能力按周期划分：
+仓库处于 **Phase W4**，版本 `0.4.0-w4`。已落地能力按周期划分：
 
 - **W1**：`internal/toolcache`（线程安全 KV，in-memory + JSON 持久化、TTL、LRU 驱逐）；`internal/injection`（解析 `<!-- QIANKUN:START/END -->` C1 注入区，读取 `AGENTS.md`/`CLAUDE.md`）。
 - **W2**：`internal/memory/tokens`（保守 token 估算）；`internal/memory/scan`（仓库遍历 Walker，输出文件分档/权重/token/跳过原因，默认跳过噪声目录、lockfile、AI 工具历史，轻量支持 `.gitignore`/`.contextgateignore`）。
-- **W3**：`internal/memory/index`（SQLite 持久化 Memory Index + 关键词/FTS5 检索）；`internal/usage`（UsageMeter，SQLite）；`internal/instructions`（InstructionsLinter v0，report-only）；`internal/weekly`（周报聚合）。
+- **W3**：`internal/memory/index`（SQLite 持久化 Memory Index + 关键词/FTS5 检索）；`internal/usage`（UsageMeter，SQLite）；`internal/instructions`（InstructionsLinter，含 warning）；`internal/weekly`（周报聚合）。
+- **W4**：`internal/mcp` + `cmd/qiankun-mcpd/mcp.go`（stdio MCP server，最小工具集 `memory-query`/`usage-report`，端到端 Go 测试覆盖）；`internal/memory/index` hybrid retrieval（可解释 Rel 打分 + MMR 多样性 rerank，FTS5 与 keyword 回退两路一致）；`internal/memory/symbols`（Symbol Index v0，正则/AST-lite 提取组件/路由/store/service/controller/repository/endpoint 等符号）；`internal/memory/commands`（命令发现，仅从真实 scripts/Maven/Gradle task 解析）；`internal/memory/scan` framework profile（Vue/Angular/React/Spring，monorepo 可多 profile 共存）与真实 role 分配（app-entry/route-definition/page-view/component/store/service/controller/repository/configuration/documentation/generated-noisy），并接入 `roleBoost` 与 role 感知的噪声治理；周报 `Saved vs Overhead` 净收益视图。
 - `internal/compaction` 仅为占位包，**不介入会话流**。
 
-**尚未实现（W4+）**：完整 framework profile、symbol index 深化、hybrid rerank、semantic cache、MCP server 端到端、IDEA 插件产品化、企业驾驶舱。不要在文档或代码中宣称已具备这些能力。
+**尚未实现（仍属未来）**：semantic/向量召回、symbol index 深化（跨文件引用、调用图、LSP 接入）、IDEA 插件产品化（状态栏/自检/安装引导）、企业驾驶舱。不要在文档或代码中宣称已具备这些能力。
 
 ## 代码结构
 
 - `cmd/qiankun-mcpd/main.go` — CLI 入口，子命令通过 `args[0]` 分发。
-- 命令：`--version`、`--health`、`memory-scan`、`memory-query`、`usage-report`、`weekly-report`。
+- 命令：`--version`、`--health`、`memory-scan`、`memory-query`、`usage-report`、`weekly-report`、`mcp`（stdio MCP server）。
 - `internal/<domain>/` — 业务逻辑分层，见上文各 package。
 - 默认数据目录 `${QIANKUN_HOME:-~/.qiankun}`：`db/memory.sqlite`、`db/usage.sqlite`、`cache/`、`logs/`。
 
@@ -44,9 +45,9 @@
 ```bash
 make build        # go build -o bin/qiankun-mcpd ./cmd/qiankun-mcpd
 make test         # go test ./...
-make smoke        # test + build + 端到端冒烟（health/memory-scan/query/usage/weekly）
+make smoke        # test + build + 端到端冒烟（health/memory-scan/query/usage/weekly/mcp stdio）
 go test -race ./...
-make idea-plugin  # W3 仅占位输出
+make idea-plugin  # 仅占位输出（IDEA 插件产品化仍属未来）
 ```
 
 技术栈：Go 1.22，SQLite 使用 `modernc.org/sqlite`（**纯 Go，无需 CGO**，便于 sidecar 分发）。FTS5 在运行时探测，不可用时降级到 `keyword_index` + Go 侧评分，不阻断查询。

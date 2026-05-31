@@ -23,9 +23,18 @@ smoke: test build
 	grep -q '## Memory Index' "$$tmp/weekly-report.md"; \
 	grep -q '## UsageMeter' "$$tmp/weekly-report.md"; \
 	grep -q '## Recent Changes' "$$tmp/weekly-report.md"; \
+	grep -q '## Saved vs Overhead' "$$tmp/weekly-report.md"; \
 	grep -q '## Instructions Lint' "$$tmp/weekly-report.md"; \
 	grep -qE '^- Files read: [1-9][0-9]*$$' "$$tmp/weekly-report.md"; \
-	grep -qE '^- Findings: [1-9][0-9]*$$' "$$tmp/weekly-report.md"
+	grep -qE '^- Warnings: [1-9][0-9]*$$' "$$tmp/weekly-report.md"; \
+	printf '%s\n' \
+		'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' \
+		'{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+		| QIANKUN_HOME="$$tmp" ./$(BINARY) mcp > "$$tmp/mcp.jsonl"; \
+	grep -q '"serverInfo"' "$$tmp/mcp.jsonl"; \
+	grep -q '"qiankun-mcpd"' "$$tmp/mcp.jsonl"; \
+	grep -q '"memory-query"' "$$tmp/mcp.jsonl"; \
+	grep -q '"usage-report"' "$$tmp/mcp.jsonl"
 
 test:
 	go test ./...
