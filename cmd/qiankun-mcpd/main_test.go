@@ -56,7 +56,7 @@ func TestVersionOutput(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "0.3.0-w3") {
+	if !strings.Contains(stdout.String(), "0.4.0-w4") {
 		t.Fatalf("expected version in stdout, got %q", stdout.String())
 	}
 	if stderr.Len() != 0 {

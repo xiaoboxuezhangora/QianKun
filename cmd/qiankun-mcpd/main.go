@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xiaoboxuezhangora/QianKun/internal/memory/commands"
 	"github.com/xiaoboxuezhangora/QianKun/internal/memory/index"
 	"github.com/xiaoboxuezhangora/QianKun/internal/memory/scan"
 	"github.com/xiaoboxuezhangora/QianKun/internal/toolcache"
@@ -16,7 +17,7 @@ import (
 	"github.com/xiaoboxuezhangora/QianKun/internal/weekly"
 )
 
-const version = "0.3.0-w3"
+const version = "0.4.0-w4"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -54,6 +55,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runUsageReport(args[1:], stdout, stderr)
 	case "weekly-report":
 		return runWeeklyReport(args[1:], stdout, stderr)
+	case "mcp":
+		return runMCP(args[1:], stdout, stderr)
 	default:
 		printUsage(stderr)
 		return 2
@@ -136,6 +139,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "       qiankun-mcpd memory-query --root <path> --query <text> [--top-k 8]")
 	fmt.Fprintln(w, "       qiankun-mcpd usage-report")
 	fmt.Fprintln(w, "       qiankun-mcpd weekly-report --format markdown --instructions-root <path> [--output file]")
+	fmt.Fprintln(w, "       qiankun-mcpd mcp")
 }
 
 func runMemoryScan(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -204,7 +208,6 @@ func runMemoryScan(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func runMemoryQuery(args []string, stdout io.Writer, stderr io.Writer) int {
-	start := time.Now()
 	var root string
 	var query string
 	var topK int
@@ -229,27 +232,51 @@ func runMemoryQuery(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
+	response, err := queryMemory(root, query, topK, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "memory-query failed: %v\n", err)
+		return 1
+	}
+
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(response); err != nil {
+		fmt.Fprintf(stderr, "write memory-query output failed: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// queryMemory 执行一次 Memory Index 检索的完整逻辑：扫描 → 同步索引 → 检索 →
+// 命令发现，并以非阻断方式记录 usage 事件。CLI 与 MCP 路径共用此函数，不重复实现。
+// 入参 topK 由调用方负责校验/clamp；usage 记录或命令发现失败只写 stderr，不影响返回。
+func queryMemory(root, query string, topK int, stderr io.Writer) (index.QueryResponse, error) {
+	start := time.Now()
+
 	result, err := scan.Scan(scan.Options{Root: root})
 	if err != nil {
-		fmt.Fprintf(stderr, "memory-query scan failed: %v\n", err)
-		return 1
+		return index.QueryResponse{}, fmt.Errorf("scan failed: %w", err)
 	}
 	store, err := index.Open(index.Options{})
 	if err != nil {
-		fmt.Fprintf(stderr, "memory-query index failed: %v\n", err)
-		return 1
+		return index.QueryResponse{}, fmt.Errorf("index open failed: %w", err)
 	}
 	defer store.Close()
 
 	syncStats, err := store.SyncScan(result)
 	if err != nil {
-		fmt.Fprintf(stderr, "memory-query index sync failed: %v\n", err)
-		return 1
+		return index.QueryResponse{}, fmt.Errorf("index sync failed: %w", err)
 	}
 	response, err := store.Query(result.Root, query, topK)
 	if err != nil {
-		fmt.Fprintf(stderr, "memory-query failed: %v\n", err)
-		return 1
+		return index.QueryResponse{}, fmt.Errorf("query failed: %w", err)
+	}
+
+	// 命令发现：以非阻断方式附加真实可用命令作为查询上下文，失败只告警不影响主输出。
+	if disc, derr := commands.Discover(result.Root); derr != nil {
+		fmt.Fprintf(stderr, "memory-query command discovery failed: %v\n", derr)
+	} else {
+		response.Commands = disc.Commands
 	}
 
 	resultTokens := sumResultTokens(response.Results)
@@ -276,13 +303,7 @@ func runMemoryQuery(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	recordUsageEvents(stderr, events...)
 
-	encoder := json.NewEncoder(stdout)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(response); err != nil {
-		fmt.Fprintf(stderr, "write memory-query output failed: %v\n", err)
-		return 1
-	}
-	return 0
+	return response, nil
 }
 
 func runUsageReport(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -290,13 +311,7 @@ func runUsageReport(args []string, stdout io.Writer, stderr io.Writer) int {
 		printUsage(stderr)
 		return 2
 	}
-	store, err := usage.Open("")
-	if err != nil {
-		fmt.Fprintf(stderr, "usage-report failed: %v\n", err)
-		return 1
-	}
-	defer store.Close()
-	report, err := store.Report()
+	report, err := usageReport()
 	if err != nil {
 		fmt.Fprintf(stderr, "usage-report failed: %v\n", err)
 		return 1
@@ -308,6 +323,16 @@ func runUsageReport(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// usageReport 打开 UsageMeter 并生成聚合报告，CLI 与 MCP 路径共用。
+func usageReport() (usage.Report, error) {
+	store, err := usage.Open("")
+	if err != nil {
+		return usage.Report{}, err
+	}
+	defer store.Close()
+	return store.Report()
 }
 
 func runWeeklyReport(args []string, stdout io.Writer, stderr io.Writer) int {
