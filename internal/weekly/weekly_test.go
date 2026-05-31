@@ -17,7 +17,13 @@ func TestMarkdownIncludesW3Sections(t *testing.T) {
 		"## Memory Index",
 		"## Recent Changes",
 		"## UsageMeter",
+		"## Saved vs Overhead",
+		"Net saved tokens (saved - overhead):",
+		"Overhead ratio (overhead / saved):",
 		"## Instructions Lint",
+		"- Warnings:",
+		"Suggested fix",
+		"report-only",
 		"## W3 Known Gaps",
 	} {
 		if !strings.Contains(out, want) {
