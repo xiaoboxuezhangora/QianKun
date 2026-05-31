@@ -111,6 +111,14 @@ go install github.com/xiaoboxuezhangora/QianKun/cmd/qiankun-mcpd@latest
 
 该命令要求远端 GitHub 仓库路径与 `go.mod` 的 module path 保持一致，即 `github.com/xiaoboxuezhangora/QianKun`。
 
+卸载（默认只删二进制并保留数据目录，加 `--purge` 才一并删除 `${QIANKUN_HOME:-~/.qiankun}`）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xiaoboxuezhangora/QianKun/main/scripts/uninstall.sh | bash
+# 连同数据目录一起删除：
+curl -fsSL https://raw.githubusercontent.com/xiaoboxuezhangora/QianKun/main/scripts/uninstall.sh | bash -s -- --purge
+```
+
 目标验证命令：
 
 ```bash
